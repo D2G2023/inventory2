@@ -9,6 +9,7 @@ import simpy
 
 @dataclass(frozen=True)
 class EOQParameters:
+    # Core EOQ inputs for one-item inventory planning.
     annual_demand: float
     ordering_cost: float
     holding_cost: float
@@ -20,31 +21,37 @@ class EOQParameters:
 
     @property
     def daily_demand(self) -> float:
+        # Convert annual demand into the deterministic daily demand rate.
         return self.annual_demand / 365.0
 
     @property
     def eoq(self) -> float:
+        # Classical EOQ formula: optimal lot size balancing ordering and holding cost.
         if self.annual_demand <= 0 or self.ordering_cost <= 0 or self.holding_cost <= 0:
             return 0.0
         return math.sqrt(2.0 * self.annual_demand * self.ordering_cost / self.holding_cost)
 
     @property
     def order_size(self) -> int:
+        # Use a manual order quantity when provided, otherwise fall back to EOQ.
         quantity = self.order_quantity if self.order_quantity is not None else self.eoq
         return max(1, int(round(quantity)))
 
     @property
     def demand_interval_days(self) -> float:
+        # In this deterministic model, one unit of demand occurs every 1 / daily_demand days.
         if self.daily_demand <= 0:
             return math.inf
         return 1.0 / self.daily_demand
 
     @property
     def theoretical_reorder_point(self) -> float:
+        # Deterministic reorder point: expected demand during lead time.
         return self.daily_demand * self.lead_time_days
 
     @property
     def reorder_level(self) -> float:
+        # Allow the study notebook to override the theoretical reorder point manually.
         if self.reorder_point is None:
             return self.theoretical_reorder_point
         return self.reorder_point
@@ -52,6 +59,7 @@ class EOQParameters:
 
 @dataclass
 class SimulationState:
+    # Mutable state that changes as the discrete-event simulation runs.
     inventory_on_hand: float
     inventory_position: float
     orders_outstanding: int = 0
@@ -89,10 +97,13 @@ def run_event_driven_simulation(params: EOQParameters) -> dict[str, Any]:
     orders: list[dict[str, Any]] = []
 
     def advance_inventory_area(current_time: float) -> None:
+        # Inventory is a step function between events, so average inventory comes
+        # from the area under that curve divided by the total horizon length.
         state.inventory_area += state.inventory_on_hand * (current_time - state.last_event_time)
         state.last_event_time = current_time
 
     def replenishment_process(quantity: int) -> Any:
+        # A placed order becomes an arrival event after the deterministic lead time.
         yield env.timeout(params.lead_time_days)
         advance_inventory_area(env.now)
         state.inventory_on_hand += quantity
@@ -119,11 +130,13 @@ def run_event_driven_simulation(params: EOQParameters) -> dict[str, Any]:
             advance_inventory_area(env.now)
 
             if state.inventory_on_hand >= 1:
+                # Served demand reduces both on-hand inventory and inventory position.
                 state.inventory_on_hand -= 1
                 state.inventory_position -= 1
                 state.demand_served += 1
                 event_name = "demand_served"
             else:
+                # Lost demand leaves inventory unchanged because no stock is available.
                 state.demand_lost += 1
                 event_name = "demand_lost"
 
@@ -138,6 +151,8 @@ def run_event_driven_simulation(params: EOQParameters) -> dict[str, Any]:
             )
 
             if state.inventory_position <= params.reorder_level:
+                # Placing an order immediately raises inventory position, but on-hand
+                # inventory only increases later when the replenishment arrives.
                 state.inventory_position += order_size
                 state.orders_outstanding += order_size
                 state.order_count += 1
@@ -163,8 +178,10 @@ def run_event_driven_simulation(params: EOQParameters) -> dict[str, Any]:
     env.run(until=params.horizon_days)
 
     if state.last_event_time < params.horizon_days:
+        # Close the final area segment from the last event to the end of the study horizon.
         state.inventory_area += state.inventory_on_hand * (params.horizon_days - state.last_event_time)
 
+    # Average inventory is the time-weighted mean on-hand inventory level.
     average_inventory = state.inventory_area / params.horizon_days
     fill_rate = (
         state.demand_served / (state.demand_served + state.demand_lost)
