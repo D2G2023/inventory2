@@ -1,0 +1,225 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+\usepackage{hyperref}
+
+\title{Event-Driven Simulation of the Economic Order Quantity Model}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Purpose}
+This note describes a simple single-item inventory model based on the Economic Order Quantity (EOQ) rule. The system has one stock keeping unit, reorder decisions are the input to the system, and customer demand is the output process that removes units from inventory.
+
+The goal is to combine:
+\begin{itemize}
+  \item the classical EOQ formula for selecting the replenishment batch size, and
+  \item an event-driven simulation that shows how inventory evolves over time.
+\end{itemize}
+
+\section{Model Assumptions}
+We consider one product only. The assumptions are:
+\begin{itemize}
+  \item demand occurs at a constant average rate $D$ units per year,
+  \item every replenishment order incurs a fixed ordering cost $K$,
+  \item holding one unit in stock costs $h$ per year,
+  \item lead time is deterministic and equal to $L$ days,
+  \item the reorder point is $R$ units,
+  \item each order has fixed size $Q$.
+\end{itemize}
+
+The state variables of the system are:
+\begin{align}
+I(t) &= \text{inventory on hand at time } t, \\
+IP(t) &= \text{inventory position at time } t.
+\end{align}
+
+The inventory position includes outstanding orders:
+\begin{equation}
+IP(t) = I(t) + \text{units already ordered but not yet received.}
+\end{equation}
+
+\section{EOQ Formula}
+In the classical deterministic EOQ model, the annual total cost is approximated by
+\begin{equation}
+C(Q) = \frac{D}{Q}K + \frac{Q}{2}h.
+\end{equation}
+
+The first term is the yearly ordering cost:
+\begin{equation}
+\text{Ordering cost per year} = \frac{D}{Q}K.
+\end{equation}
+
+The second term is the yearly holding cost:
+\begin{equation}
+\text{Holding cost per year} = \frac{Q}{2}h.
+\end{equation}
+
+To minimize $C(Q)$, differentiate with respect to $Q$:
+\begin{equation}
+\frac{dC}{dQ} = -\frac{DK}{Q^2} + \frac{h}{2}.
+\end{equation}
+
+Setting the derivative equal to zero gives the EOQ:
+\begin{equation}
+Q^* = \sqrt{\frac{2DK}{h}}.
+\end{equation}
+
+This value is used as the replenishment batch size in the simulation:
+\begin{equation}
+Q = Q^*.
+\end{equation}
+
+\section{Reorder Point Logic}
+Demand is converted to a daily rate:
+\begin{equation}
+d = \frac{D}{365}.
+\end{equation}
+
+If demand and lead time are deterministic, a natural reorder point is demand during lead time:
+\begin{equation}
+R = dL.
+\end{equation}
+
+In the implementation, the reorder point is computed automatically as $R=dL$ by default. A manual override is also available so users can study what happens when the reorder point is too small or too large.
+
+\section{Event-Driven Simulation}
+The simulation clock jumps from event to event instead of updating the system at every tiny time step. The implementation uses the \texttt{simpy} discrete-event simulation library, so the model is written as interacting processes scheduled on a simulation environment. There are only two event types:
+\begin{enumerate}
+  \item \textbf{Demand event}: one unit is requested by the customer side.
+  \item \textbf{Replenishment event}: an order of size $Q$ arrives after the lead time.
+\end{enumerate}
+
+At a demand event:
+\begin{align}
+I(t^+) &=
+\begin{cases}
+I(t^-) - 1, & \text{if } I(t^-) \ge 1, \\
+I(t^-), & \text{if stockout occurs,}
+\end{cases} \\
+IP(t^+) &=
+\begin{cases}
+IP(t^-) - 1, & \text{if demand is served,} \\
+IP(t^-), & \text{if demand is lost.}
+\end{cases}
+\end{align}
+
+After demand is processed, the reorder policy is checked:
+\begin{equation}
+\text{if } IP(t^+) \le R, \text{ then place an order of size } Q.
+\end{equation}
+
+Placing a new order immediately changes inventory position but not inventory on hand:
+\begin{align}
+I(t^+) &= I(t^+), \\
+IP(t^+) &= IP(t^+) + Q.
+\end{align}
+
+At the replenishment arrival time:
+\begin{align}
+I(t^+) &= I(t^-) + Q, \\
+IP(t^+) &= IP(t^-).
+\end{align}
+
+\section{Performance Measures}
+Over a simulation horizon of $T$ days, the model reports:
+\begin{itemize}
+  \item total served demand,
+  \item lost demand,
+  \item number of orders placed,
+  \item average inventory,
+  \item fill rate,
+  \item annualized holding, ordering, and total cost.
+\end{itemize}
+
+Average inventory is computed from the area under the inventory curve:
+\begin{equation}
+\bar{I} = \frac{1}{T}\int_0^T I(t)\,dt.
+\end{equation}
+
+The fill rate is:
+\begin{equation}
+\text{Fill rate} = \frac{\text{served demand}}{\text{served demand} + \text{lost demand}}.
+\end{equation}
+
+Annualized holding cost is:
+\begin{equation}
+\text{Holding cost} = \bar{I}h.
+\end{equation}
+
+If $N$ orders are placed during the horizon, then the annualized ordering cost is:
+\begin{equation}
+\text{Ordering cost} = N \cdot \frac{365}{T} \cdot K.
+\end{equation}
+
+Hence the estimated annual total cost is:
+\begin{equation}
+\text{Total cost} = \bar{I}h + N \cdot \frac{365}{T} \cdot K.
+\end{equation}
+
+\section{Interpretation}
+The EOQ formula provides the theoretically efficient order size under the classical deterministic assumptions. The event-driven simulation adds operational detail by showing exactly when demand arrives, when reorder decisions are triggered, and when replenishment orders reach the warehouse.
+
+This makes the tool useful for study because one can observe:
+\begin{itemize}
+  \item how the EOQ batch size affects ordering frequency,
+  \item how the reorder point affects stockouts,
+  \item how lead time shifts the replenishment timing,
+  \item how inventory trajectories generate total cost.
+\end{itemize}
+
+\section{Sensitivity Analysis}
+Sensitivity analysis is important because the EOQ model depends on input parameters that are often uncertain in practice. Annual demand $D$, ordering cost $K$, holding cost $h$, and lead time $L$ are usually estimated rather than known exactly. If these estimates change, then the recommended order quantity, reorder point, and cost performance may also change.
+
+There are two main reasons to perform sensitivity analysis:
+\begin{itemize}
+  \item to measure robustness, that is, to check whether small input errors lead to only small changes in policy performance,
+  \item to identify the most influential parameters, so attention can be focused on the inputs that matter most.
+\end{itemize}
+
+For the EOQ formula,
+\begin{equation}
+Q^* = \sqrt{\frac{2DK}{h}},
+\end{equation}
+the square-root structure already suggests partial robustness. For example, if demand doubles, then EOQ does not double; instead it is multiplied by $\sqrt{2}$. Similarly, if ordering cost doubles, EOQ is also multiplied by $\sqrt{2}$, while if holding cost doubles, EOQ is divided by $\sqrt{2}$. This means the optimal order quantity changes more slowly than the raw inputs.
+
+However, cost and service performance can still be sensitive to parameter changes, especially through the reorder point
+\begin{equation}
+R = dL = \frac{D}{365}L.
+\end{equation}
+Lead time and demand directly affect when replenishment is triggered, so errors in these values can create either excessive inventory or stockouts.
+
+In this project, sensitivity analysis can be carried out by varying one or more inputs and rerunning the simulation. A simple one-factor-at-a-time procedure is:
+\begin{enumerate}
+  \item choose a baseline parameter set $(D, K, h, L)$,
+  \item compute the corresponding EOQ and reorder point,
+  \item vary one input while holding the others fixed,
+  \item rerun the simulation for each new value,
+  \item compare outputs such as total cost, fill rate, average inventory, and number of orders.
+\end{enumerate}
+
+Typical studies include:
+\begin{itemize}
+  \item changing $D$ to see how demand scale affects EOQ and stock trajectory,
+  \item changing $K$ to study the tradeoff between frequent small orders and infrequent large orders,
+  \item changing $h$ to see how expensive storage pushes the policy toward smaller lots,
+  \item changing $L$ to study how replenishment delays increase the need for earlier ordering,
+  \item manually perturbing $R$ above or below $\frac{D}{365}L$ to examine service-level effects.
+\end{itemize}
+
+The notebook interface is well suited for this because sliders allow fast experimentation. For a more systematic study, one can define a grid of parameter values and record the simulation outputs in a table. The results can then be plotted as curves such as:
+\begin{itemize}
+  \item total cost versus order quantity,
+  \item fill rate versus reorder point,
+  \item average inventory versus lead time,
+  \item number of orders versus annual demand.
+\end{itemize}
+
+From a teaching perspective, sensitivity analysis helps show that the EOQ formula is not only a single number, but part of a broader decision problem. It reveals when the EOQ recommendation is stable, when the reorder point becomes critical, and which assumptions deserve the most attention in inventory planning.
+
+\section{Notebook Usage}
+The companion Jupyter notebook exposes sliders for all key inputs. It computes the EOQ, runs the \texttt{simpy}-based event-driven simulation, and plots the inventory trajectory and event table interactively with \texttt{ipywidgets}.
+
+\end{document}
