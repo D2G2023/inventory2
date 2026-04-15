@@ -19,12 +19,17 @@
 \section{Overview}
 
 This document describes the discrete-event simulation (DES) methodology used to
-study inventory management for a \textbf{closed-loop remanufacturing system} for
-EV motors.  The system has two replenishment channels: an internal
-\emph{remanufacturing} channel that recovers returned cores, and an external
-\emph{supplier} channel that covers any remaining deficit.  Because both channels
-are stochastic, an analytical model such as EOQ cannot capture the interaction
-between them, making simulation the appropriate tool.
+study inventory management for a \textbf{semi closed-loop inventory management system} for
+EV motors.  The goal is to balance two opposing costs --- holding costs from excess
+stock and lost sales from stockouts --- by choosing when to order (reorder point
+$ROP$) and how much to order (order-up-to level $S$) to minimise total cost
+subject to a service-level constraint.
+
+The system has two replenishment channels: an internal \emph{remanufacturing}
+channel that recovers returned cores, and an external \emph{supplier} channel
+that covers any remaining deficit.  Because both channels are stochastic, an
+analytical model such as EOQ cannot capture the interaction between them, making
+simulation the appropriate tool.
 
 The simulator is built with \textbf{SimPy}, a Python process-based DES framework.
 A parametric $(ROP, S)$ replenishment policy is tested over a 104-week horizon and
@@ -58,7 +63,7 @@ cost~$TC$.  Four analyses are carried out:
 
   \item[Closed-Loop Rate Sensitivity.] Independently varies $p_r$ and $p_y$
     across their plausible ranges.  Quantifies how quickly service level
-    deteriorates as closed-loop recovery degrades, and how much external supplier
+    deteriorates as semi closed-loop recovery degrades, and how much external supplier
     purchasing must increase to compensate.
 
   \item[Tornado Chart (OAT $\pm 30\%$).] Perturbs each of six parameters by
@@ -204,7 +209,7 @@ The remaining average external supplier need is therefore:
 \begin{equation}
   D - \bar{g} \;=\; 25 - 19.6 \;\approx\; 5.4 \text{ units/week}.
 \end{equation}
-The closed-loop channel thus covers approximately $78\%$ of weekly demand on
+The semi closed-loop channel thus covers approximately $78\%$ of weekly demand on
 average, making the supplier an incremental top-up rather than the primary source.
 
 % ─────────────────────────────────────────────────────────────────────────────
