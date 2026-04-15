@@ -4,6 +4,7 @@
 \usepackage{hyperref}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning}
+\usepackage{eurosym}
 
 \title{Methodology: EV Motor Remanufacturing Inventory Simulation}
 \author{}
@@ -26,8 +27,55 @@ are stochastic, an analytical model such as EOQ cannot capture the interaction
 between them, making simulation the appropriate tool.
 
 The simulator is built with \textbf{SimPy}, a Python process-based DES framework.
-A parametric $(s,S)$ replenishment policy is tested over a 104-week horizon and
+A parametric $(ROP, S)$ replenishment policy is tested over a 104-week horizon and
 evaluated via service level, cost, and inventory trajectory.
+
+\subsection*{Motivation for Sensitivity Analysis}
+
+A single simulation run produces one realisation of a stochastic system.  Two
+sources of uncertainty make it insufficient on its own:
+
+\begin{enumerate}
+  \item \textbf{Stochastic noise.}  Core returns, remanufacturing yield, and
+    supplier lead times are all random.  A single seed may overstate or understate
+    performance by several percentage points.
+
+  \item \textbf{Parameter uncertainty.}  Key rates such as $p_r$ (core return
+    rate) and $p_y$ (remanufacturing yield) are estimated from historical data and
+    may shift as the vehicle fleet ages or the reman process evolves.  Policy
+    parameters $ROP$ and $S$ are controllable but their optimal values depend on
+    the uncertain environment.
+\end{enumerate}
+
+Sensitivity analysis addresses both issues by systematically varying one or more
+parameters while measuring the effect on service level~$\mathrm{SL}$ and total
+cost~$TC$.  Four analyses are carried out:
+
+\begin{description}
+  \item[ROP Sweep.] Sweeps the reorder point from 10 to 58 (fixing $S=60$) with
+    $N=20$ Monte Carlo replications per point.  Identifies the minimum $ROP$
+    required to meet a target service level and the cost premium of over-stocking.
+
+  \item[Closed-Loop Rate Sensitivity.] Independently varies $p_r$ and $p_y$
+    across their plausible ranges.  Quantifies how quickly service level
+    deteriorates as closed-loop recovery degrades, and how much external supplier
+    purchasing must increase to compensate.
+
+  \item[Tornado Chart (OAT $\pm 30\%$).] Perturbs each of six parameters by
+    $\pm 30\%$ in turn.  Ranks parameters by their influence on $\mathrm{SL}$
+    and $TC$, producing the canonical deliverable for management communication:
+    a horizontal bar chart with the widest bar on top.
+
+  \item[(ROP, S) Pareto Frontier.] Grid-searches 25 feasible $(ROP, S)$
+    combinations with $N=10$ replications each.  Maps the achievable
+    cost--service tradeoff surface and identifies the Pareto-optimal policies
+    that cannot be simultaneously improved on both dimensions.
+\end{description}
+
+Together, these analyses replace the single-seed point estimate with a
+\textbf{decision surface}: a map of cost and service outcomes across the
+parameter space, from which managers can select a policy that satisfies their
+service-level target at minimum cost.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Notation}
@@ -42,29 +90,30 @@ $IP(t)$         & units      & pipeline-aware inventory position at time $t$ \\
 $W(t)$          & units      & remanufacturing work-in-process (cores) at time $t$ \\
 $O(t)$          & units      & supplier units currently on order at time $t$ \\
 $D$             & units/week & constant customer demand per week \\
+$L$             & week       & supplier lead time \\
 $p_r$           & ---        & core return rate (fraction of fulfilled demand) \\
 $p_y$           & ---        & remanufacturing yield (fraction of returned cores) \\
 $\tau_r$        & weeks      & fixed remanufacturing lead time \\
-$s$             & units      & reorder point \\
+$ROP$             & units      & reorder point \\
 $S$             & units      & order-up-to level \\
 $\mu_L,\sigma_L$& weeks      & mean and std dev of supplier lead time \\
-$c_p$           & \$/unit    & purchase cost per supplier unit \\
-$c_o$           & \$/order   & fixed ordering cost per supplier order \\
-$c_h$           & \$/unit$\cdot$week & holding cost per unit per week \\
+$c_p$           & \euro/unit    & purchase cost per supplier unit \\
+$c_o$           & \euro/order   & fixed ordering cost per supplier order \\
+$c_h$           & \euro/unit$\cdot$week & holding cost per unit per week \\
 \bottomrule
 \end{tabular}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{System Description}
 
-\subsection{Closed-Loop Supply Chain}
+\subsection{Semi Closed-Loop Supply Chain}
 
 Each week $D$ units of customer demand arrive.  Fulfilled units generate core
 returns with probability $p_r$ each, which enter a remanufacturing pipeline.
 After a lead time of $\tau_r$ weeks, each returned core is successfully
 remanufactured with independent probability $p_y$.  Remanufactured units are
-added back to stock.  An $(s,S)$ policy triggers external supplier orders
-whenever the pipeline-aware inventory position falls at or below $s$.
+added back to stock.  An $(ROP,S)$ policy (replenish to max level) triggers external supplier orders
+whenever the pipeline-aware inventory position falls at or below $s$. 
 
 \subsection{Material Flow}
 
@@ -103,11 +152,11 @@ still accounting for the work already in progress.
 
 \subsection{(s, S) Order-Up-To Policy}
 
-The system uses a \textbf{periodic-review $(s,S)$ policy} with review period
+The system uses a \textbf{periodic-review $(ROP,S)$ policy} with review period
 $T_r = 1$ week.  At each review instant:
 \begin{enumerate}
   \item Compute $IP(t)$ via Equation~\eqref{eq:ip}.
-  \item If $IP(t) \le s$, place a supplier order of size:
+  \item If $IP(t) \le ROP$, place a supplier order of size:
         \begin{equation}
           Q_t \;=\; \max\!\bigl(0,\;\lfloor S - IP(t) \rfloor\bigr).
           \label{eq:order_qty}
@@ -126,7 +175,7 @@ outstanding supplier deliveries and pending reman output, avoiding double-orderi
 \toprule
 Parameter & Value & Description \\
 \midrule
-$s$              & 35 units & reorder point \\
+$ROP$            & 35 units & reorder point \\
 $S$              & 60 units & order-up-to level \\
 $D$              & 25 units/week & weekly demand \\
 $p_r$            & 0.87 & core return rate \\
@@ -134,9 +183,9 @@ $p_y$            & 0.90 & remanufacturing yield \\
 $\tau_r$         & 2.0 weeks & reman lead time \\
 $\mu_L$          & 2.0 weeks & mean supplier lead time \\
 $\sigma_L$       & 0.5 weeks & std dev of supplier lead time \\
-$c_p$            & \$400/unit & purchase cost \\
-$c_o$            & \$250/order & fixed ordering cost \\
-$c_h$            & \$4/unit$\cdot$week & holding cost \\
+$c_p$            & \euro 2500/unit & purchase cost \\
+$c_o$            & \euro250/order & fixed ordering cost \\
+$c_h$            & \euro100/unit$\cdot$week & holding cost \\
 Horizon          & 104 weeks & simulation duration \\
 \bottomrule
 \end{tabular}
@@ -163,11 +212,13 @@ average, making the supplier an incremental top-up rather than the primary sourc
 
 Total cost over the simulation horizon $T$ (in weeks) is decomposed into three
 components:
-\begin{equation}
-  \boxed{TC \;=\; c_p \sum_i q_i^{\mathrm{sup}}
-              \;+\; c_o \cdot N_{\mathrm{ord}}
-              \;+\; c_h \cdot \bar{I} \cdot T}
-  \label{eq:tc}
+\begin{equation} \label{eq:tc}
+\begin{split}
+TC & = Purchase \; Cost (PC) + Ordering \; Cost (OC) + Holding \; Cost (HC) \\
+   &= c_p \sum_i q_i^{\mathrm{sup}}
+              + c_o \cdot N_{\mathrm{ord}}
+              + c_h \cdot \bar{I} \cdot T 
+\end{split}
 \end{equation}
 where:
 \begin{itemize}
@@ -177,8 +228,7 @@ where:
         time-average stock on hand, computed from all state snapshots
         $\mathcal{S}$.
 \end{itemize}
-Remanufacturing costs are not modelled explicitly; they are treated as sunk or
-captured in a separate cost centre.
+Remanufacturing costs are not modelled at this moment. 
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Key Performance Indicators}
@@ -270,17 +320,17 @@ Avg stock on hand ($\bar{I}$) & 11.2 units \\
 Avg inventory position ($\overline{IP}$) & 41.8 units \\
 Avg expected reman WIP    & 23.4 units \\
 \midrule
-Purchase cost ($c_p \sum q_i^{\mathrm{sup}}$) & \$176{,}800 \\
-Ordering cost ($c_o N_{\mathrm{ord}}$)        & \$4{,}250 \\
-Holding cost ($c_h \bar{I} T$)                & \$4{,}648 \\
-\textbf{Total cost} ($TC$)                    & \$\textbf{185{,}698} \\
+Purchase cost ($c_p \sum q_i^{\mathrm{sup}}$) & \euro176{,}800 \\
+Ordering cost ($c_o N_{\mathrm{ord}}$)        & \euro4{,}250 \\
+Holding cost ($c_h \bar{I} T$)                & \euro4{,}648 \\
+\textbf{Total cost} ($TC$)                    & \euro\textbf{185{,}698} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The service level of $86.6\%$ indicates that the reorder point $s = 35$ is
+The service level of $86.6\%$ indicates that the reorder point $ROP = 35$ is
 insufficient: during the 2-week reman and supplier lead times, demand can deplete
-stock before replenishment arrives.  Raising $s$ trades higher holding cost for
+stock before replenishment arrives.  Raising $ROP$ trades higher holding cost for
 fewer stockouts.
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -288,7 +338,7 @@ fewer stockouts.
 
 A single run with one seed is subject to sampling noise.  The natural extension
 is to run $N$ independent replications with different seeds for a given policy
-$(s, S)$ and aggregate KPIs into empirical distributions.  Let
+$(ROP, S)$ and aggregate KPIs into empirical distributions.  Let
 $\mathrm{SL}^{(k)}$ and $TC^{(k)}$ denote the service level and total cost from
 replication $k$.  The Monte Carlo estimates are:
 \begin{align}
@@ -300,7 +350,7 @@ A $95\%$ confidence interval for the true mean service level is approximately:
 \begin{equation}
   \hat{\mu}_{\mathrm{SL}} \;\pm\; 1.96\,\frac{\hat{\sigma}_{\mathrm{SL}}}{\sqrt{N}}.
 \end{equation}
-Sweeping $s$ over a grid $\{s_1, s_2, \ldots\}$ while holding $S$ fixed, and
+Sweeping $ROP$ over a grid $\{s_1, s_2, \ldots\}$ while holding $S$ fixed, and
 plotting $(\hat{\mu}_{TC},\; \hat{\mu}_{\mathrm{SL}})$ for each value, traces
 the \textbf{cost--service Pareto frontier} of the $(s,S)$ policy family.
 
