@@ -1,0 +1,328 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,array}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\title{Methodology: EV Motor Remanufacturing Inventory Simulation}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Overview}
+
+This document describes the discrete-event simulation (DES) methodology used to
+study inventory management for a \textbf{closed-loop remanufacturing system} for
+EV motors.  The system has two replenishment channels: an internal
+\emph{remanufacturing} channel that recovers returned cores, and an external
+\emph{supplier} channel that covers any remaining deficit.  Because both channels
+are stochastic, an analytical model such as EOQ cannot capture the interaction
+between them, making simulation the appropriate tool.
+
+The simulator is built with \textbf{SimPy}, a Python process-based DES framework.
+A parametric $(s,S)$ replenishment policy is tested over a 104-week horizon and
+evaluated via service level, cost, and inventory trajectory.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Notation}
+
+\begin{tabular}{lll}
+\toprule
+Symbol & Unit & Description \\
+\midrule
+$t$             & week       & simulation time \\
+$I(t)$          & units      & stock on hand at time $t$ \\
+$IP(t)$         & units      & pipeline-aware inventory position at time $t$ \\
+$W(t)$          & units      & remanufacturing work-in-process (cores) at time $t$ \\
+$O(t)$          & units      & supplier units currently on order at time $t$ \\
+$D$             & units/week & constant customer demand per week \\
+$p_r$           & ---        & core return rate (fraction of fulfilled demand) \\
+$p_y$           & ---        & remanufacturing yield (fraction of returned cores) \\
+$\tau_r$        & weeks      & fixed remanufacturing lead time \\
+$s$             & units      & reorder point \\
+$S$             & units      & order-up-to level \\
+$\mu_L,\sigma_L$& weeks      & mean and std dev of supplier lead time \\
+$c_p$           & \$/unit    & purchase cost per supplier unit \\
+$c_o$           & \$/order   & fixed ordering cost per supplier order \\
+$c_h$           & \$/unit$\cdot$week & holding cost per unit per week \\
+\bottomrule
+\end{tabular}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{System Description}
+
+\subsection{Closed-Loop Supply Chain}
+
+Each week $D$ units of customer demand arrive.  Fulfilled units generate core
+returns with probability $p_r$ each, which enter a remanufacturing pipeline.
+After a lead time of $\tau_r$ weeks, each returned core is successfully
+remanufactured with independent probability $p_y$.  Remanufactured units are
+added back to stock.  An $(s,S)$ policy triggers external supplier orders
+whenever the pipeline-aware inventory position falls at or below $s$.
+
+\subsection{Material Flow}
+
+At the end of each week $t$, let $f_t$ denote the number of units fulfilled and
+$b_t$ the corresponding cores returned.  The quantities satisfy:
+\begin{align}
+  f_t &= \min(D,\; I(t^-)), \\
+  b_t &\sim \mathrm{Binomial}(f_t,\; p_r).
+\end{align}
+After the reman lead time $\tau_r$, the good units produced from batch $b_t$ are:
+\begin{equation}
+  g_t \sim \mathrm{Binomial}(b_t,\; p_y).
+\end{equation}
+Supplier orders placed at time $t_0$ arrive at time $t_0 + L$, where:
+\begin{equation}
+  L \sim \max\!\bigl(0.1,\; \mathcal{N}(\mu_L, \sigma_L^2)\bigr).
+\end{equation}
+The lower bound of $0.1$ weeks prevents degenerate zero lead times.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Inventory Position}
+
+The \textbf{stock on hand} $I(t)$ counts only units physically available.
+The \textbf{inventory position} augments $I(t)$ with all pipeline commitments:
+\begin{equation}
+  \boxed{IP(t) \;=\; I(t) \;+\; O(t) \;+\; W(t)\,p_y}
+  \label{eq:ip}
+\end{equation}
+where $W(t)\,p_y$ is the expected number of good units still in the
+remanufacturing pipeline.  Using the expectation (rather than the realized count)
+prevents the ordering policy from reacting to noise in the reman pipeline while
+still accounting for the work already in progress.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Replenishment Policy}
+
+\subsection{(s, S) Order-Up-To Policy}
+
+The system uses a \textbf{periodic-review $(s,S)$ policy} with review period
+$T_r = 1$ week.  At each review instant:
+\begin{enumerate}
+  \item Compute $IP(t)$ via Equation~\eqref{eq:ip}.
+  \item If $IP(t) \le s$, place a supplier order of size:
+        \begin{equation}
+          Q_t \;=\; \max\!\bigl(0,\;\lfloor S - IP(t) \rfloor\bigr).
+          \label{eq:order_qty}
+        \end{equation}
+  \item Otherwise, take no action.
+\end{enumerate}
+The order quantity $Q_t$ is \emph{variable}: it restores the pipeline position
+exactly to $S$, unlike a fixed-$Q$ policy.  The use of $IP(t)$ in
+Equation~\eqref{eq:order_qty} means the policy automatically adjusts for
+outstanding supplier deliveries and pending reman output, avoiding double-ordering.
+
+\subsection{Baseline Parameter Values}
+
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+Parameter & Value & Description \\
+\midrule
+$s$              & 35 units & reorder point \\
+$S$              & 60 units & order-up-to level \\
+$D$              & 25 units/week & weekly demand \\
+$p_r$            & 0.87 & core return rate \\
+$p_y$            & 0.90 & remanufacturing yield \\
+$\tau_r$         & 2.0 weeks & reman lead time \\
+$\mu_L$          & 2.0 weeks & mean supplier lead time \\
+$\sigma_L$       & 0.5 weeks & std dev of supplier lead time \\
+$c_p$            & \$400/unit & purchase cost \\
+$c_o$            & \$250/order & fixed ordering cost \\
+$c_h$            & \$4/unit$\cdot$week & holding cost \\
+Horizon          & 104 weeks & simulation duration \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Effective Reman Contribution}
+
+Under the baseline parameters, the average net remanufacturing contribution per
+week is:
+\begin{equation}
+  \bar{g} \;=\; D \cdot p_r \cdot p_y
+          \;=\; 25 \times 0.87 \times 0.90
+          \;\approx\; 19.6 \text{ units/week}.
+\end{equation}
+The remaining average external supplier need is therefore:
+\begin{equation}
+  D - \bar{g} \;=\; 25 - 19.6 \;\approx\; 5.4 \text{ units/week}.
+\end{equation}
+The closed-loop channel thus covers approximately $78\%$ of weekly demand on
+average, making the supplier an incremental top-up rather than the primary source.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Cost Model}
+
+Total cost over the simulation horizon $T$ (in weeks) is decomposed into three
+components:
+\begin{equation}
+  \boxed{TC \;=\; c_p \sum_i q_i^{\mathrm{sup}}
+              \;+\; c_o \cdot N_{\mathrm{ord}}
+              \;+\; c_h \cdot \bar{I} \cdot T}
+  \label{eq:tc}
+\end{equation}
+where:
+\begin{itemize}
+  \item $q_i^{\mathrm{sup}}$ is the quantity delivered by supplier order $i$,
+  \item $N_{\mathrm{ord}}$ is the total number of supplier orders placed,
+  \item $\bar{I} = \frac{1}{|\mathcal{S}|}\sum_{t \in \mathcal{S}} I(t)$ is the
+        time-average stock on hand, computed from all state snapshots
+        $\mathcal{S}$.
+\end{itemize}
+Remanufacturing costs are not modelled explicitly; they are treated as sunk or
+captured in a separate cost centre.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Key Performance Indicators}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+KPI & Formula & Notes \\
+\midrule
+Service level & $\mathrm{SL} = \dfrac{\sum_t f_t}{\sum_t D}$ & fill-rate metric \\[6pt]
+Total stockout units & $\sum_t (D - f_t)^+$ & $(x)^+ = \max(0,x)$ \\[4pt]
+Avg stock on hand & $\bar{I}$ & from snapshots \\[4pt]
+Avg inventory position & $\overline{IP}$ & from snapshots \\[4pt]
+Avg expected reman WIP & $\overline{W \cdot p_y}$ & from snapshots \\[4pt]
+Total cost & $TC$ & Equation~\eqref{eq:tc} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Simulation Engine}
+
+\subsection{Discrete-Event Simulation}
+
+The SimPy engine advances simulation time to the next scheduled event.  Four
+concurrent coroutine processes run inside a single shared state object:
+
+\begin{description}
+  \item[\texttt{weekly\_demand}] Fires every 1 week.  Computes $f_t$, records
+    any stockout $b_t^{\mathrm{short}} = D - f_t$, draws
+    $b_t \sim \mathrm{Binomial}(f_t, p_r)$, and spawns a
+    \texttt{reman\_process} coroutine for each non-zero batch.
+
+  \item[\texttt{reman\_process}($b_t$)] Suspends for $\tau_r$ weeks, then draws
+    $g_t \sim \mathrm{Binomial}(b_t, p_y)$ and adds $g_t$ to $I(t)$.
+
+  \item[\texttt{reorder\_monitor}] Fires every $T_r$ weeks.  Evaluates
+    $IP(t)$ via Equation~\eqref{eq:ip}; if $IP(t) \le s$, places a supplier
+    order of size $Q_t$ (Equation~\eqref{eq:order_qty}) and spawns a
+    \texttt{supplier\_order} coroutine.
+
+  \item[\texttt{supplier\_order}($Q_t$)] Draws $L \sim \max(0.1,
+    \mathcal{N}(\mu_L, \sigma_L^2))$, suspends for $L$ weeks, then adds $Q_t$
+    to $I(t)$.
+\end{description}
+
+\subsection{State Snapshots}
+
+After every state-changing event, the simulator appends the current values of
+$I(t)$, $IP(t)$, and $W(t)\,p_y$ to time-series logs.  These logs are used
+for computing $\bar{I}$ and $\overline{IP}$ and for visualisation.
+
+\subsection{Random Number Generation}
+
+All stochastic draws use NumPy's \texttt{default\_rng} generator seeded for
+reproducibility.  Three independent distributions are drawn per event type:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+Variable & Distribution & Parameters & Event \\
+\midrule
+$b_t$ & $\mathrm{Binomial}$ & $n = f_t$, $p = p_r$ & after demand \\
+$g_t$ & $\mathrm{Binomial}$ & $n = b_t$, $p = p_y$ & after reman LT \\
+$L$   & $\mathcal{N}$ (clipped) & $\mu_L$, $\sigma_L$ & per supplier order \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Single-Run Results (Baseline)}
+
+With seed 42 and the baseline parameters over 104 weeks:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+KPI & Value \\
+\midrule
+Total demand              & 2{,}575 units \\
+Filled demand             & 2{,}230 units \\
+Total stockouts           & 345 units (60 events) \\
+Service level ($\mathrm{SL}$) & 86.6\% \\
+Reman units restocked     & 1{,}728 \\
+Supplier units delivered  & 442 \\
+Supplier orders placed    & 17 \\
+Avg order quantity        & 27.5 units \\
+Avg stock on hand ($\bar{I}$) & 11.2 units \\
+Avg inventory position ($\overline{IP}$) & 41.8 units \\
+Avg expected reman WIP    & 23.4 units \\
+\midrule
+Purchase cost ($c_p \sum q_i^{\mathrm{sup}}$) & \$176{,}800 \\
+Ordering cost ($c_o N_{\mathrm{ord}}$)        & \$4{,}250 \\
+Holding cost ($c_h \bar{I} T$)                & \$4{,}648 \\
+\textbf{Total cost} ($TC$)                    & \$\mathbf{185{,}698} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The service level of $86.6\%$ indicates that the reorder point $s = 35$ is
+insufficient: during the 2-week reman and supplier lead times, demand can deplete
+stock before replenishment arrives.  Raising $s$ trades higher holding cost for
+fewer stockouts.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Monte Carlo Extension}
+
+A single run with one seed is subject to sampling noise.  The natural extension
+is to run $N$ independent replications with different seeds for a given policy
+$(s, S)$ and aggregate KPIs into empirical distributions.  Let
+$\mathrm{SL}^{(k)}$ and $TC^{(k)}$ denote the service level and total cost from
+replication $k$.  The Monte Carlo estimates are:
+\begin{align}
+  \hat{\mu}_{\mathrm{SL}} &= \frac{1}{N}\sum_{k=1}^{N} \mathrm{SL}^{(k)}, &
+  \hat{\sigma}_{\mathrm{SL}} &= \sqrt{\frac{1}{N-1}\sum_{k=1}^{N}
+    \bigl(\mathrm{SL}^{(k)} - \hat{\mu}_{\mathrm{SL}}\bigr)^2}.
+\end{align}
+A $95\%$ confidence interval for the true mean service level is approximately:
+\begin{equation}
+  \hat{\mu}_{\mathrm{SL}} \;\pm\; 1.96\,\frac{\hat{\sigma}_{\mathrm{SL}}}{\sqrt{N}}.
+\end{equation}
+Sweeping $s$ over a grid $\{s_1, s_2, \ldots\}$ while holding $S$ fixed, and
+plotting $(\hat{\mu}_{TC},\; \hat{\mu}_{\mathrm{SL}})$ for each value, traces
+the \textbf{cost--service Pareto frontier} of the $(s,S)$ policy family.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Limitations and Future Work}
+
+\begin{itemize}
+  \item \textbf{Demand model}: demand is currently constant at $D$ units/week.
+    Replacing it with a stochastic process (e.g.\ Poisson or negative binomial)
+    would increase realism and widen the stockout distribution.
+  \item \textbf{Reman lead time}: $\tau_r$ is deterministic.  A random
+    $\tau_r \sim \mathcal{N}(\mu_r, \sigma_r^2)$ would capture shop-floor
+    variability.
+  \item \textbf{Reman cost}: adding a cost per core ($c_r$ per unit processed)
+    would allow comparison of reman-heavy vs.\ supplier-heavy strategies on a
+    total-cost basis.
+  \item \textbf{Lost sales vs.\ backlog}: the current model uses lost sales
+    (unfulfilled demand is not backordered).  A backlog model would track
+    cumulative shortfall and may be more appropriate if customers wait.
+  \item \textbf{Capacity constraints}: the remanufacturing shop is assumed to
+    have unlimited capacity.  A bounded throughput constraint would add queuing
+    dynamics.
+\end{itemize}
+
+\end{document}

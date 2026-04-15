@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Read(//c/Users/tiyuo/miniconda3/envs/simulation/**)",
+      "Read(//c/Users/tiyuo/anaconda3/envs/simulation/**)",
+      "Read(//c/Users/tiyuo/**)",
+      "Bash(/c/Users/tiyuo/.conda/envs/simulation/python.exe -c ' *)"
+    ]
+  }
+}
